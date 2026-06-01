@@ -1,0 +1,34 @@
+{
+  "name": "claude-skills",
+  "owner": {
+    "name": "Charles Tanton",
+    "email": "foxtrotcharlie@users.noreply.github.com"
+  },
+  "metadata": {
+    "description": "General-purpose Claude Code skills for Drupal development and everyday coding workflows.",
+    "version": "1.0.0"
+  },
+  "plugins": [
+    {
+      "name": "drupal-dev",
+      "description": "General-purpose Drupal development skills: an iterative phpcs/phpstan quality loop, codebase architecture analysis, and deprecation scanning ahead of major-version upgrades.",
+      "source": "./",
+      "strict": false,
+      "skills": [
+        "./skills/drupal-quality-loop",
+        "./skills/drupal-architecture-analysis",
+        "./skills/drupal-deprecation-scan"
+      ]
+    },
+    {
+      "name": "dev-general",
+      "description": "Workflow skills that aren't tied to any framework: a sticky teach-as-you-go mode for narrated coding, and a session miner that finds repetitive work worth turning into skills.",
+      "source": "./",
+      "strict": false,
+      "skills": [
+        "./skills/teach-me-as-you-go",
+        "./skills/skill-prospector"
+      ]
+    }
+  ]
+}
