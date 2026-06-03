@@ -1,0 +1,6 @@
+{
+  "name": "drupal-dev",
+  "version": "1.0.0",
+  "description": "General-purpose Drupal development skills: an iterative phpcs/phpstan quality loop, codebase architecture analysis, and deprecation scanning ahead of major-version upgrades.",
+  "author": { "name": "Charles Tanton" }
+}

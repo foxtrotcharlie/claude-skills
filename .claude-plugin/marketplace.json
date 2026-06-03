@@ -11,24 +11,19 @@
   "plugins": [
     {
       "name": "drupal-dev",
-      "description": "General-purpose Drupal development skills: an iterative phpcs/phpstan quality loop, codebase architecture analysis, and deprecation scanning ahead of major-version upgrades.",
-      "source": "./",
-      "strict": false,
-      "skills": [
-        "./skills/drupal-quality-loop",
-        "./skills/drupal-architecture-analysis",
-        "./skills/drupal-deprecation-scan"
-      ]
+      "description": "General-purpose Drupal development skills: quality loop, architecture analysis, deprecation scanning.",
+      "version": "1.0.0",
+      "author": { "name": "Charles Tanton" },
+      "category": "development",
+      "source": "./plugins/drupal-dev"
     },
     {
       "name": "dev-general",
-      "description": "Workflow skills that aren't tied to any framework: a sticky teach-as-you-go mode for narrated coding, and a session miner that finds repetitive work worth turning into skills.",
-      "source": "./",
-      "strict": false,
-      "skills": [
-        "./skills/teach-me-as-you-go",
-        "./skills/skill-prospector"
-      ]
+      "description": "Framework-agnostic workflow skills: teach-as-you-go mode and a session-mining skill prospector.",
+      "version": "1.0.0",
+      "author": { "name": "Charles Tanton" },
+      "category": "productivity",
+      "source": "./plugins/dev-general"
     }
   ]
 }

@@ -1,0 +1,6 @@
+{
+  "name": "dev-general",
+  "version": "1.0.0",
+  "description": "Framework-agnostic workflow skills: a sticky teach-as-you-go mode for narrated coding, and a session miner that finds repetitive work worth turning into skills.",
+  "author": { "name": "Charles Tanton" }
+}
