@@ -110,24 +110,29 @@ Ask via `AskUserQuestion` (single-select):
 > - **Custom + vendored upstream** — Also scans `web/modules/apple/`, `web/themes/apple/*`, etc. Use when prepping upstream PRs against `apple-drupal/*`, `ciderpress/*`, `people-applications/*`
 > - **Cancel — stop the drupal-deprecation-scan skill**
 
-### 4. Discover the modules to scan
+### 4. Discover the projects to scan
 
-For **Custom only** (the default), build the module-name list from `.info.yml` files. This matches the pattern used in reflect #2261 and signups #1011:
+`upgrade_status:analyze` operates on **projects**, not individual modules. A project is a single installable unit with its `<name>.info.yml` at its root; submodules under `<project>/modules/<sub>/<sub>.info.yml` are part of their parent project's release and are walked recursively when the parent is scanned. **Pass projects only — passing a submodule machine name produces an "invalid project machine name" error.**
+
+That means the discovery `find` must stop at the project root, not descend into `modules/`:
 
 ```bash
-MODULES=$(find web/modules/custom -mindepth 2 -maxdepth 4 -name '*.info.yml' \
-  ! -path '*/tests/*' \
+# Modules and themes: project root sits at depth 2 from web/modules/custom or web/themes/custom
+MODULES=$(find web/modules/custom -mindepth 2 -maxdepth 2 -name '*.info.yml' 2>/dev/null \
   | xargs -n1 basename \
   | sed 's/\.info\.yml$//' \
   | tr '\n' ' ')
 
-THEMES=$(find web/themes/custom -mindepth 2 -maxdepth 3 -name '*.info.yml' \
+THEMES=$(find web/themes/custom -mindepth 2 -maxdepth 2 -name '*.info.yml' 2>/dev/null \
   | xargs -n1 basename \
   | sed 's/\.info\.yml$//' \
   | tr '\n' ' ')
 
+# Profiles: depth varies by layout
+#   flat:          web/profiles/<profile>/<profile>.info.yml          (depth 2)
+#   vendored:      web/profiles/<vendor>/<profile>/<profile>.info.yml (depth 3, e.g. web/profiles/apple/ciderpress_profile/)
 PROFILES=$(find web/profiles -mindepth 2 -maxdepth 3 -name '*.info.yml' \
-  ! -path '*/contrib/*' \
+  ! -path '*/contrib/*' 2>/dev/null \
   | xargs -n1 basename \
   | sed 's/\.info\.yml$//' \
   | tr '\n' ' ')
@@ -136,25 +141,29 @@ TARGETS="$MODULES $THEMES $PROFILES"
 echo "Will scan: $TARGETS"
 ```
 
-For **Custom + vendored upstream**, additionally include `web/modules/apple` and `web/themes/apple`:
+For **Custom + vendored upstream**, additionally include `web/modules/apple` and `web/themes/apple` (same `-maxdepth 2` reasoning — vendored Apple packages are projects too):
 
 ```bash
-VENDORED=$(find web/modules/apple web/themes/apple -mindepth 2 -maxdepth 4 -name '*.info.yml' 2>/dev/null \
+VENDORED=$(find web/modules/apple web/themes/apple -mindepth 2 -maxdepth 2 -name '*.info.yml' 2>/dev/null \
   | xargs -n1 basename | sed 's/\.info\.yml$//' | tr '\n' ' ')
 TARGETS="$TARGETS $VENDORED"
 ```
 
 Skip empty subtrees gracefully.
 
+**Layout caveat:** the depths above assume the standard Drupal composer-managed layout (one project per directory directly under `web/modules/custom/`, `web/themes/custom/`, or under a vendor namespace inside `web/profiles/`). If a repo nests projects deeper — e.g. `web/modules/custom/<grouping>/<project>/<project>.info.yml` — bump the maxdepth accordingly. Quick sanity check: `find web/modules/custom -name '*.info.yml' | sort`. Any project-root `.info.yml` deeper than depth 2 means the discovery needs widening.
+
 ### 5. Run the scan
 
-Pass the discovered targets as positional args. Always include `--ignore-uninstalled` (matches the shared `ciderpress/drupal-testing` CI harness; suppresses false positives from libraries declared by disabled modules):
+Pass the discovered targets as positional args. Always include `--ignore-uninstalled` (matches the shared `ciderpress/drupal-testing` CI harness; suppresses false positives from libraries declared by disabled modules).
+
+`ddev drush <args>` collapses positional args into a single space-joined token, which `upgrade_status:analyze` then rejects as one giant invalid machine name. **Use `ddev exec` instead** so the args reach drush as separate words:
 
 ```bash
-ddev drush upgrade_status:analyze $TARGETS --ignore-uninstalled --no-ansi 2>&1
+ddev exec "vendor/bin/drush upgrade_status:analyze $TARGETS --ignore-uninstalled --no-ansi" 2>&1
 ```
 
-Exit code 1 is normal (it just means findings exist). Don't error on it.
+Exit code 1 or 3 is normal (just means findings exist). Don't error on it.
 
 ### 6. Extract structured results from the keyValue store
 
@@ -167,18 +176,35 @@ ddev drush eval "echo json_encode(\Drupal::keyValue('upgrade_status_scan_results
 
 Each top-level key is a module name. Each value has `{date, data: {files: {<path>: {messages: [{message, line, analyzer, upgrade_status_category}]}}}}`.
 
-Use this Python (or the equivalent jq) to bucket the results:
+Use this Python (or the equivalent jq) to bucket the results. Two non-obvious things to handle:
+
+1. **The keyValue store persists results across scans** — entries from earlier full-tree scans for `apple_*` modules etc. are still there. Filter to the projects you scanned this round (or by file-path prefix).
+2. **upgrade_status returns inconsistent paths** — PHP files come back as `web/modules/custom/...` but `.info.yml` files come back as `modules/custom/...` (no `web/` prefix). Normalize before filtering.
 
 ```bash
 python3 <<'PY'
-import json, re, pathlib, datetime
+import json, re, pathlib
 raw_path = sorted(pathlib.Path('.claude/drupal-update-reports').glob('upgrade-status-raw-*.json'))[-1]
 all_results = json.loads(raw_path.read_text())
 
+# Set of project machine names you passed to upgrade_status:analyze this round.
+# Filter to these so stale persisted results from earlier scans don't pollute the report.
+SCAN_PROJECTS = set("$TARGETS".split())  # populate from step 4's $TARGETS
+
+CUSTOM_RX = re.compile(r'(?:^|/)(modules/custom/|themes/custom/|profiles/)')
+
 findings = []
 for module, result in all_results.items():
-    files = result.get('data', {}).get('files') or {}
+    if SCAN_PROJECTS and module not in SCAN_PROJECTS:
+        continue
+    files = (result or {}).get('data', {}).get('files') or {}
     for path, fdata in files.items():
+        clean_path = path.replace('/var/www/html/', '')
+        # Normalize: prepend 'web/' if upgrade_status omitted it (happens for info.yml/composer.json)
+        if not clean_path.startswith('web/') and CUSTOM_RX.search('/' + clean_path):
+            clean_path = 'web/' + clean_path
+        if not CUSTOM_RX.search('/' + clean_path):
+            continue  # skip vendored or out-of-scope paths
         for msg in fdata.get('messages', []):
             text = msg.get('message', '')
             since = removed = None
@@ -188,7 +214,7 @@ for module, result in all_results.items():
             if m: removed = f"{m.group(1)}.{m.group(2)}"
             findings.append({
                 'module': module,
-                'file': path.replace('/var/www/html/', ''),
+                'file': clean_path,
                 'line': msg.get('line'),
                 'analyzer': msg.get('analyzer', 'unknown'),
                 'category': msg.get('upgrade_status_category', 'unknown'),
