@@ -366,6 +366,38 @@ These modules are currently disabled in this environment. Most findings here are
 - `.claude/drupal-update-reports/upgrade-status-raw-YYYY-MM-DD.json` — structured keyValue dump
 - `.claude/drupal-update-reports/enabled-extensions.json` — drush pm:list snapshot at scan time
 - `.claude/drupal-update-reports/upgrade-status-findings.json` — normalized findings (`{enabled: [...], disabled: [...]}`)
+
+## Verify yourself
+
+So a reviewer (or future-you) can confirm the headline without re-running the whole skill, every report ends with the **exact commands** that produced the result. Include the resolved `$TARGETS` value inline so the commands are copy-paste runnable. Use this template, substituting the live values:
+
+```bash
+# 1. Confirm upgrade_status is enabled (install if not):
+#    ddev composer require drupal/upgrade_status --dev && ddev drush en upgrade_status -y
+ddev drush pm:list --filter=name=upgrade_status --status=enabled --no-ansi
+
+# 2. Re-run the scan with the same scope this report used:
+ddev exec "vendor/bin/drush upgrade_status:analyze <RESOLVED $TARGETS HERE> --ignore-uninstalled --no-ansi"
+
+# 3. Filter the structured keyValue store to ONLY real Drupal-API deprecations
+#    (those tagged with a "Deprecated in drupal:X.Y" version stamp). PHPStan,
+#    library, info.yml, and Twig findings are filtered out — what remains is
+#    the urgent set.
+ddev drush eval "
+\$all = \Drupal::keyValue('upgrade_status_scan_results')->getAll();
+foreach (\$all as \$module => \$result) {
+  foreach ((\$result['data']['files'] ?? []) as \$path => \$f) {
+    foreach (\$f['messages'] ?? [] as \$m) {
+      if (preg_match('/[Dd]eprecated in drupal:/', \$m['message'] ?? '')) {
+        echo \$module . ' | ' . \$path . ':' . \$m['line'] . PHP_EOL;
+        echo '  ' . substr(\$m['message'], 0, 200) . PHP_EOL;
+      }
+    }
+  }
+}"
+```
+
+Expected result for a clean custom-only scan: the filter prints nothing under `web/modules/custom/`, `web/themes/custom/`, or the local profile. Anything that DOES print there is a real Drupal-API deprecation that needs a fix.
 ```
 
 If zero real deprecations and the only items are info.yml `core_version_requirement`:
