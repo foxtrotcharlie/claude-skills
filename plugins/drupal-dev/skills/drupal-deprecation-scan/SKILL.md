@@ -176,35 +176,78 @@ ddev drush eval "echo json_encode(\Drupal::keyValue('upgrade_status_scan_results
 
 Each top-level key is a module name. Each value has `{date, data: {files: {<path>: {messages: [{message, line, analyzer, upgrade_status_category}]}}}}`.
 
-Use this Python (or the equivalent jq) to bucket the results. Two non-obvious things to handle:
+Also capture the set of currently-enabled extensions so the normalizer can suppress findings from disabled modules (where some analyzers — notably `LibraryDeprecationAnalyzer` — emit false positives like *"library is not defined because the defining extension is not installed"*). The install profile isn't included in `drush pm:list --status=enabled`, so capture it separately:
+
+```bash
+ddev drush pm:list --status=enabled --format=json --no-ansi 2>/dev/null \
+  > .claude/drupal-update-reports/enabled-extensions.json
+
+# Install profile is "active" but not "enabled" in the pm:list sense; capture separately.
+ddev drush status --field=install-profile --no-ansi 2>/dev/null \
+  > .claude/drupal-update-reports/active-profile.txt
+```
+
+Use this Python (or the equivalent jq) to bucket the results. Four non-obvious things to handle:
 
 1. **The keyValue store persists results across scans** — entries from earlier full-tree scans for `apple_*` modules etc. are still there. Filter to the projects you scanned this round (or by file-path prefix).
 2. **upgrade_status returns inconsistent paths** — PHP files come back as `web/modules/custom/...` but `.info.yml` files come back as `modules/custom/...` (no `web/` prefix). Normalize before filtering.
+3. **upgrade_status keys findings under the project name (e.g. `clb_core`), not the innermost submodule (e.g. `clb_calibration_org`).** To check enabled state per file, resolve each finding's path back to its innermost module by walking all `*.info.yml` files in the scan tree.
+4. **Disabled-module findings are mostly noise** — analyzers that need to introspect a module (libraries, plugin manifests) can't do so when the module is uninstalled, and produce "cannot decide" warnings. Suppress these from the headline; show them in a separate section so nothing's lost.
 
 ```bash
 python3 <<'PY'
 import json, re, pathlib
 raw_path = sorted(pathlib.Path('.claude/drupal-update-reports').glob('upgrade-status-raw-*.json'))[-1]
 all_results = json.loads(raw_path.read_text())
+enabled_path = pathlib.Path('.claude/drupal-update-reports/enabled-extensions.json')
+profile_path = pathlib.Path('.claude/drupal-update-reports/active-profile.txt')
+enabled_set = None
+if enabled_path.exists():
+    enabled_set = set(json.loads(enabled_path.read_text()).keys())
+    if profile_path.exists():
+        profile = profile_path.read_text().strip()
+        if profile:
+            enabled_set.add(profile)
 
 # Set of project machine names you passed to upgrade_status:analyze this round.
-# Filter to these so stale persisted results from earlier scans don't pollute the report.
-SCAN_PROJECTS = set("$TARGETS".split())  # populate from step 4's $TARGETS
+SCAN_PROJECTS = set("$TARGETS".split())
 
 CUSTOM_RX = re.compile(r'(?:^|/)(modules/custom/|themes/custom/|profiles/)')
 
-findings = []
+# Walk all info.yml files in the scanned subtrees to build a (directory -> machine name) map.
+# Used to resolve each finding's file path to its innermost (sub)module for enabled-state checks.
+modules_by_dir = {}  # directory path (relative, no leading 'web/') -> machine name
+for info_yml in pathlib.Path('web').rglob('*.info.yml'):
+    rel = str(info_yml.parent).replace('web/', '', 1)
+    name = info_yml.name[:-len('.info.yml')]  # strip both extensions; pathlib.stem only strips one
+    if CUSTOM_RX.search('/' + rel) or rel.startswith(('modules/apple/', 'themes/apple/')):
+        modules_by_dir[rel] = name
+
+def innermost_module(file_path):
+    """Find deepest module whose directory contains this file path."""
+    rel = file_path.replace('web/', '', 1) if file_path.startswith('web/') else file_path
+    best, best_len = None, -1
+    for d, name in modules_by_dir.items():
+        if rel == d or rel.startswith(d + '/'):
+            if len(d) > best_len:
+                best, best_len = name, len(d)
+    return best
+
+enabled_findings, disabled_findings = [], []
 for module, result in all_results.items():
     if SCAN_PROJECTS and module not in SCAN_PROJECTS:
         continue
     files = (result or {}).get('data', {}).get('files') or {}
     for path, fdata in files.items():
         clean_path = path.replace('/var/www/html/', '')
-        # Normalize: prepend 'web/' if upgrade_status omitted it (happens for info.yml/composer.json)
         if not clean_path.startswith('web/') and CUSTOM_RX.search('/' + clean_path):
             clean_path = 'web/' + clean_path
         if not CUSTOM_RX.search('/' + clean_path):
-            continue  # skip vendored or out-of-scope paths
+            continue
+
+        innermost = innermost_module(clean_path) or module
+        is_enabled = enabled_set is None or innermost in enabled_set
+
         for msg in fdata.get('messages', []):
             text = msg.get('message', '')
             since = removed = None
@@ -212,8 +255,10 @@ for module, result in all_results.items():
             if m: since = f"{m.group(1)}.{m.group(2)}"
             m = re.search(r'removed (?:from|in) drupal:(\d+)\.(\d+)', text)
             if m: removed = f"{m.group(1)}.{m.group(2)}"
-            findings.append({
+            row = {
                 'module': module,
+                'innermost_module': innermost,
+                'enabled': is_enabled,
                 'file': clean_path,
                 'line': msg.get('line'),
                 'analyzer': msg.get('analyzer', 'unknown'),
@@ -221,14 +266,21 @@ for module, result in all_results.items():
                 'since': since,
                 'removed': removed,
                 'message': text,
-            })
+            }
+            (enabled_findings if is_enabled else disabled_findings).append(row)
 
-# Save normalized findings
 out = pathlib.Path('.claude/drupal-update-reports/upgrade-status-findings.json')
-out.write_text(json.dumps(findings, indent=2))
-print(f"{len(findings)} findings normalized -> {out}")
+out.write_text(json.dumps({'enabled': enabled_findings, 'disabled': disabled_findings}, indent=2))
+print(f"Enabled-module findings (main report): {len(enabled_findings)}")
+print(f"Disabled-module findings (suppressed):  {len(disabled_findings)}")
+if disabled_findings:
+    from collections import Counter
+    c = Counter(f['innermost_module'] for f in disabled_findings)
+    print(f"  Suppressed modules: {dict(c)}")
 PY
 ```
+
+If a user explicitly wants to include disabled modules (e.g. they're scanning a project that's about to be re-enabled), skip the enabled-extensions capture and the normalizer falls back to including everything (`enabled_set is None` branch).
 
 ### 7. Build the report
 
@@ -240,7 +292,7 @@ DRUPAL_VERSION=$(ddev drush status --field=drupal-version --no-ansi 2>/dev/null)
 
 Compute next/+2 majors from the X.Y.Z form (e.g. `11.3.11` → next `12`, plus-two `13`).
 
-Group findings four ways and produce sections **in this order** in the report:
+Group findings four ways and produce sections **in this order** in the report. **All headline counts and section bodies use the `enabled` partition only**; the `disabled` partition shows up at the bottom in a single "suppressed" section so nothing is silently lost:
 
 1. **By analyzer** — `PHPStan` vs the three real deprecation analyzers. Header counts, then a one-line summary of "what's actually being reported".
 2. **By Drupal version impact** (only for findings with a `removed` version):
@@ -251,6 +303,8 @@ Group findings four ways and produce sections **in this order** in the report:
 4. **Other findings** — info.yml `core_version_requirement` items collapsed to one bullet per file; library/Twig/PHPStan groups collapsed to short tables.
 
 For **vendored upstream findings** (when scope was Custom + vendored): show in a separate top-level section labelled "**Upstream — fix in apple-drupal/* or ciderpress/* repos, not here**". Don't intermix with custom findings.
+
+For **disabled-module findings**: collect them in a single "Suppressed: findings in disabled modules" section at the bottom, grouped by innermost module name with a per-module count. Note that `LibraryDeprecationAnalyzer` produces "library is not defined because the defining extension is not installed" warnings for disabled modules even when the library declarations are correct — these are inspection limitations, not real bugs. If the user wants to act on a disabled module's findings, they should either re-enable the module before scanning or remove the module's code entirely.
 
 #### Report template
 
@@ -263,13 +317,14 @@ For **vendored upstream findings** (when scope was Custom + vendored): show in a
 - **Scope:** Custom only | Custom + vendored upstream
 - **Tool:** drupal/upgrade_status <version> (already installed | added by skill)
 
-## Headline
+## Headline (enabled modules only)
 
 - **Real Drupal-API deprecations:** N (M will break in D{X+1}, K in D{X+2})
 - **Already-broken (deprecation removed in current or earlier core):** N
 - **Code-quality (PHPStan) findings:** N — not deprecations; consider /drupal-quality-loop
 - **info.yml core_version_requirement updates needed:** N
 - **Library/Twig advisories:** N
+- **Suppressed (disabled modules):** N findings across M modules — see bottom of report
 
 ## Will break in Drupal {X+1}
 
@@ -299,16 +354,24 @@ For **vendored upstream findings** (when scope was Custom + vendored): show in a
 
 [grouped by upstream package: apple-drupal/<x>, ciderpress/<y> ...]
 
+## Suppressed: findings in disabled modules
+
+These modules are currently disabled in this environment. Most findings here are false positives from analyzers that can't introspect a disabled module (e.g. "library is not defined because the defining extension is not installed"). To act on them, either re-enable the module before re-scanning, or remove the module's code entirely if it's dead.
+
+- **<module_a>** (N findings) — typical: <one-line summary of categories>
+- **<module_b>** (N findings)
+
 ## Raw outputs
 
 - `.claude/drupal-update-reports/upgrade-status-raw-YYYY-MM-DD.json` — structured keyValue dump
-- `.claude/drupal-update-reports/upgrade-status-findings.json` — normalized findings
+- `.claude/drupal-update-reports/enabled-extensions.json` — drush pm:list snapshot at scan time
+- `.claude/drupal-update-reports/upgrade-status-findings.json` — normalized findings (`{enabled: [...], disabled: [...]}`)
 ```
 
 If zero real deprecations and the only items are info.yml `core_version_requirement`:
 
 ```
-✓ No Drupal-API deprecations in custom code. Only N info.yml files need core_version_requirement bumped to allow ^{X+1}.
+✓ No Drupal-API deprecations in enabled custom code. Only N info.yml files need core_version_requirement bumped to allow ^{X+1}.
 ```
 
 ### 8. Save report
