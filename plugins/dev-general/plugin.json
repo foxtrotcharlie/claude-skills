@@ -1,6 +1,6 @@
 {
   "name": "dev-general",
   "version": "1.0.0",
-  "description": "Framework-agnostic workflow skills: a sticky teach-as-you-go mode for narrated coding, and a session miner that finds repetitive work worth turning into skills.",
+  "description": "Framework-agnostic workflow skills: a sticky teach-as-you-go mode for narrated coding, a session miner that finds repetitive work worth turning into skills, and a Jira wiki-markup formatter for ticket comments and descriptions.",
   "author": { "name": "Charles Tanton" }
 }
