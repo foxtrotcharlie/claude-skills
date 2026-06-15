@@ -55,6 +55,7 @@ When the user says "write me a Jira comment" / "draft a Jira description for X" 
 1. Author directly in Jira wiki markup using the cheat-sheet. Don't write Markdown first and translate; produce Jira format on the first pass.
 2. Output the content as a single fenced block in chat so the user can copy-paste cleanly. **Do not use Markdown headings or `**bold**` in your surrounding chat text either** — those are for the explanation, not the deliverable.
 3. Run the validator (see "Validate before output" below) if the content is non-trivial (>20 lines or contains tables/code blocks).
+4. Copy the final output to the clipboard and tell the user (see "Copy to clipboard (always)").
 
 ## Mode 2 — Convert existing Markdown
 
@@ -76,6 +77,7 @@ When the user pastes Markdown and asks for the Jira version, OR points at a `.md
    - Markdown task lists (`- [ ] todo`) — Jira renders as plain bullets unless using a Confluence add-on; flag this to the user
 3. Run the validator on the result.
 4. Show the converted text in a fenced block.
+5. Copy the final output to the clipboard and tell the user (see "Copy to clipboard (always)").
 
 ## Validate before output
 
@@ -87,6 +89,16 @@ ${CLAUDE_SKILL_DIR}/scripts/validate-jira-syntax.sh /tmp/jira-output.txt
 ```
 
 If the validator reports errors, fix them before showing the output to the user. Warnings are advisory — judge case-by-case.
+
+## Copy to clipboard (always)
+
+After producing the final output, always copy it to the macOS clipboard so the user can paste straight into Jira. Copying from the chat lets the renderer's soft-wraps turn into real line breaks, which then have to be hand-fixed in Jira; piping a clean file to `pbcopy` avoids that. Reuse the temp file from validation (or write the output to one), then:
+
+```bash
+pbcopy < /tmp/jira-output.txt
+```
+
+Then tell the user it's on the clipboard — e.g. "Copied to clipboard — ⌘V into the Jira field (switch the editor to wiki-markup/source mode first if it's in rich-text, or the markup won't render)." Still show the content in a fenced block in chat as well, so it stays visible and re-copyable.
 
 ## When NOT to use this skill
 
