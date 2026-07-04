@@ -19,7 +19,7 @@
     },
     {
       "name": "dev-general",
-      "description": "Framework-agnostic workflow skills: teach-as-you-go mode and a session-mining skill prospector.",
+      "description": "Framework-agnostic workflow skills: teach-as-you-go narration, a session-mining skill prospector, a Jira wiki-markup formatter, and an interactive HTML diff explainer.",
       "version": "1.0.0",
       "author": { "name": "Charles Tanton" },
       "category": "productivity",

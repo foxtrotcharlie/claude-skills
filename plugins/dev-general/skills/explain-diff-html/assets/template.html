@@ -1,0 +1,243 @@
+<!DOCTYPE html>
+<!--
+  explain-diff-html · reusable scaffold
+  ------------------------------------------------------------------
+  HOW TO USE: copy this file to your output path
+  (e.g. /tmp/YYYY-MM-DD-explanation-<slug>.html), then replace the
+  {{PLACEHOLDERS}} and the demo content in each section with the real
+  explanation. Keep the <style> and <script> — they carry the CSS,
+  the two diagram families, the callouts, and the quiz interactivity,
+  including `white-space: pre` on code blocks. Delete these comments
+  and the demo examples once you've adapted them.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{PAGE TITLE}}</title>
+<style>
+  :root {
+    --ink: #1c1e21; --muted: #5b6572; --paper: #fbfaf7; --card: #ffffff; --line: #e4e0d8;
+    --accent: #2f6f8f; --accent-soft: #e8f1f5;
+    --gold: #b6852b; --gold-soft: #fbf3e0;
+    --rose: #b5485f; --rose-soft: #fbe8ec;
+    --green: #2e7d52; --green-soft: #e6f4ec;
+    --code-bg: #23252b; --code-ink: #eef0f4;
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body { margin: 0; background: var(--paper); color: var(--ink);
+    font-family: Georgia, "Iowan Old Style", "Times New Roman", serif; font-size: 18px; line-height: 1.65; }
+  .wrap { max-width: 820px; margin: 0 auto; padding: 32px 20px 120px; }
+  header.hero { border-bottom: 3px solid var(--ink); padding-bottom: 24px; margin-bottom: 8px; }
+  header.hero .kicker { font-family: -apple-system, system-ui, sans-serif; text-transform: uppercase; letter-spacing: .12em; font-size: 12px; color: var(--accent); font-weight: 700; }
+  h1 { font-size: 34px; line-height: 1.2; margin: 10px 0 8px; }
+  header.hero p.sub { color: var(--muted); font-size: 19px; margin: 0; }
+  h2 { font-size: 26px; margin: 52px 0 6px; padding-top: 18px; border-top: 1px solid var(--line); scroll-margin-top: 16px; }
+  h2 .num { color: var(--accent); font-family: -apple-system, system-ui, sans-serif; font-weight: 800; font-size: 15px; display: block; margin-bottom: 2px; }
+  h3 { font-size: 20px; margin: 30px 0 4px; }
+  p { margin: 14px 0; }
+  a { color: var(--accent); }
+  code { font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; font-size: 0.86em; background: #eee9df; padding: 1px 5px; border-radius: 4px; color: #333; }
+  pre { background: var(--code-bg); color: var(--code-ink); padding: 16px 18px; border-radius: 10px; overflow-x: auto; white-space: pre; font-size: 14px; line-height: 1.55; margin: 18px 0; }
+  pre code { background: none; color: inherit; padding: 0; font-size: inherit; }
+  /* syntax accent classes for use inside <pre>: comment/keyword/string/attr, and diff add/del */
+  .tok-c { color: #8b95a5; font-style: italic; } .tok-k { color: #d98c6a; } .tok-s { color: #9bcf8f; } .tok-a { color: #7fbfe0; }
+  .del { color: #e08b98; } .add { color: #9bcf8f; }
+
+  nav.toc { font-family: -apple-system, system-ui, sans-serif; background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 18px 22px; margin: 28px 0; }
+  nav.toc h4 { margin: 0 0 8px; font-size: 13px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+  nav.toc ol { margin: 0; padding-left: 22px; } nav.toc li { margin: 4px 0; }
+  nav.toc a { text-decoration: none; } nav.toc a:hover { text-decoration: underline; }
+
+  /* Callouts: .c-def (definition), .c-key (the key insight), .c-edge (edge case) */
+  .callout { font-family: -apple-system, system-ui, sans-serif; font-size: 15.5px; line-height: 1.55; border-radius: 10px; padding: 14px 16px 14px 18px; margin: 22px 0; border-left: 5px solid; }
+  .callout .tag { display: block; font-weight: 700; font-size: 12px; letter-spacing: .06em; text-transform: uppercase; margin-bottom: 4px; }
+  .callout p { margin: 6px 0; } .callout code { background: rgba(0,0,0,.06); }
+  .c-def { background: var(--accent-soft); border-color: var(--accent); } .c-def .tag { color: var(--accent); }
+  .c-key { background: var(--gold-soft); border-color: var(--gold); } .c-key .tag { color: var(--gold); }
+  .c-edge { background: var(--rose-soft); border-color: var(--rose); } .c-edge .tag { color: var(--rose); }
+  .skip { font-family: -apple-system, system-ui, sans-serif; font-size: 14px; color: var(--muted); background: #f2efe8; border: 1px dashed var(--line); border-radius: 8px; padding: 8px 14px; display: inline-block; margin: 6px 0 0; }
+
+  figure { margin: 26px 0; }
+  figcaption { font-family: -apple-system, system-ui, sans-serif; font-size: 13.5px; color: var(--muted); text-align: center; margin-top: 10px; }
+
+  /* Diagram family 1 — simplified UI mock ("browser" boxes) */
+  .stage-row { display: flex; gap: 18px; flex-wrap: wrap; } .stage-row > .browser { flex: 1 1 300px; }
+  .browser { background: var(--card); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,.05); }
+  .browser .bar { background: #eceae4; padding: 7px 12px; font-family: -apple-system, system-ui, sans-serif; font-size: 12px; color: var(--muted); border-bottom: 1px solid var(--line); }
+  .browser .bar b { color: var(--ink); }
+  .browser .body { padding: 14px; font-family: -apple-system, system-ui, sans-serif; font-size: 13px; }
+  .flabel { font-weight: 700; font-size: 13px; margin-bottom: 8px; }
+  .row-item { display: flex; align-items: center; gap: 8px; background: #f7f5f0; border: 1px solid var(--line); border-radius: 6px; padding: 7px 9px; margin: 6px 0; }
+  .inp { flex: 1; background: #fff; border: 1px solid #cfcabf; border-radius: 4px; padding: 5px 8px; font-size: 12px; color: #333; }
+  .btn { display: inline-block; margin-top: 8px; background: var(--accent-soft); color: var(--accent); border: 1px solid var(--accent); border-radius: 5px; padding: 5px 10px; font-size: 12px; font-weight: 600; }
+  .tag-on { color: var(--green); font-weight: 700; } .tag-off { color: var(--rose); font-weight: 700; }
+
+  /* Diagram family 2 — system / data-flow pipeline. Put EXAMPLE DATA in .ex. */
+  .pipe { display: flex; flex-wrap: wrap; align-items: stretch; font-family: -apple-system, system-ui, sans-serif; }
+  .stage { flex: 1 1 150px; background: var(--card); border: 1px solid var(--line); border-radius: 9px; padding: 11px 12px; font-size: 12.5px; }
+  .stage .st { font-weight: 700; font-size: 12px; display: block; margin-bottom: 4px; color: var(--accent); }
+  .stage .ex { font-family: ui-monospace, Menlo, monospace; font-size: 11px; color: #444; background: #f4f1ea; border-radius: 4px; padding: 2px 5px; display: inline-block; margin-top: 4px; }
+  .arrow { align-self: center; color: #b7bdc6; font-size: 20px; padding: 0 6px; }
+  @media (max-width: 640px) {
+    body { font-size: 17px; } h1 { font-size: 27px; }
+    .arrow { transform: rotate(90deg); width: 100%; text-align: center; padding: 4px 0; }
+    .pipe { flex-direction: column; }
+  }
+
+  /* A data-as-diagram block (e.g. YAML/JSON/table). Note white-space: pre. */
+  .data-block { background: #fcfbf8; border: 1px solid var(--line); border-left: 4px solid var(--gold); border-radius: 8px; padding: 12px 14px; font-family: ui-monospace, Menlo, monospace; font-size: 13px; white-space: pre; overflow-x: auto; }
+  .hl { background: #fff2cf; border-radius: 3px; padding: 0 2px; }
+
+  /* Quiz */
+  .quiz { font-family: -apple-system, system-ui, sans-serif; background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 18px 20px; margin: 22px 0; }
+  .quiz .q { font-weight: 700; font-size: 16px; margin: 0 0 12px; } .quiz .q .n { color: var(--accent); }
+  .option { display: block; width: 100%; text-align: left; background: #f7f5f0; border: 1px solid var(--line); border-radius: 8px; padding: 11px 14px; margin: 8px 0; font-size: 15px; cursor: pointer; transition: background .12s, border-color .12s; color: var(--ink); font-family: inherit; }
+  .option:hover:not(.locked) { background: #eef1f3; border-color: var(--accent); }
+  .option.correct { background: var(--green-soft); border-color: var(--green); }
+  .option.incorrect { background: var(--rose-soft); border-color: var(--rose); }
+  .option.correct::after { content: " ✓"; color: var(--green); font-weight: 800; }
+  .option.incorrect::after { content: " ✗"; color: var(--rose); font-weight: 800; }
+  .option.locked { cursor: default; }
+  .feedback { display: none; margin-top: 12px; padding: 12px 14px; border-radius: 8px; font-size: 14.5px; line-height: 1.55; background: var(--accent-soft); border-left: 4px solid var(--accent); }
+  .feedback.show { display: block; }
+  .verdict { font-weight: 700; } .verdict.ok { color: var(--green); } .verdict.no { color: var(--rose); }
+  footer { margin-top: 60px; border-top: 1px solid var(--line); padding-top: 18px; font-family: -apple-system, system-ui, sans-serif; font-size: 13px; color: var(--muted); }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header class="hero">
+  <span class="kicker">{{CONTEXT — e.g. repo · issue/PR reference}}</span>
+  <h1>{{SHORT, EVOCATIVE TITLE}}</h1>
+  <p class="sub">{{ONE-SENTENCE SUMMARY OF WHAT THE CHANGE DOES AND WHY}}</p>
+</header>
+
+<nav class="toc">
+  <h4>On this page</h4>
+  <ol>
+    <li><a href="#background">Background</a> — {{hook}}</li>
+    <li><a href="#intuition">Intuition</a> — {{hook}}</li>
+    <li><a href="#code">The code</a> — {{hook}}</li>
+    <li><a href="#quiz">Quiz</a> — check your understanding</li>
+  </ol>
+</nav>
+
+<p>{{Opening paragraph — set the scene and motivate the change before any jargon.}}</p>
+
+<h2 id="background"><span class="num">SECTION 1</span>Background</h2>
+<span class="skip">↓ Beginners start here · veterans can skip to §1.2</span>
+<h3>1.1 &nbsp;Deep background (skippable)</h3>
+<p>{{Define the domain concepts a newcomer needs. Use definition callouts:}}</p>
+<div class="callout c-def">
+  <span class="tag">Definition · {{term}}</span>
+  <p>{{Plain-language definition of a concept the change relies on.}}</p>
+</div>
+<h3 id="s12">1.2 &nbsp;Narrow background</h3>
+<p>{{Zoom in on exactly the mechanism the change modifies — how it works today.}}</p>
+
+<h2 id="intuition"><span class="num">SECTION 2</span>Intuition</h2>
+<p>{{The core idea in one or two sentences. Then build it with a toy example.}}</p>
+
+<!-- Diagram family 1: simplified UI mock. Delete if the change isn't UI-facing. -->
+<figure>
+  <div class="stage-row">
+    <div class="browser">
+      <div class="bar">{{screen}} · <b>{{before / state A}}</b></div>
+      <div class="body">
+        <div class="flabel">{{Example field}}</div>
+        <div class="row-item"><span class="inp">{{toy value 1}}</span></div>
+        <div class="row-item"><span class="inp">{{toy value 2}}</span></div>
+        <span class="btn">{{action}}</span>
+      </div>
+    </div>
+    <div class="browser">
+      <div class="bar">{{screen}} · <b>{{after / state B}}</b></div>
+      <div class="body">
+        <div class="flabel">{{Example field}}</div>
+        <div class="row-item"><span class="inp">{{toy value 1}}</span></div>
+        <div class="row-item"><span class="inp">{{toy value 2}}</span></div>
+        <span class="btn">{{action}}</span>
+      </div>
+    </div>
+  </div>
+  <figcaption>Figure 1 · {{what the reader is comparing}}</figcaption>
+</figure>
+
+<!-- Diagram family 2: system / data-flow. ALWAYS annotate with example data (.ex). -->
+<figure>
+  <div class="pipe">
+    <div class="stage"><span class="st">{{stage 1}}</span>{{what it does}}<br><span class="ex">{{example datum}}</span></div>
+    <div class="arrow">→</div>
+    <div class="stage"><span class="st">{{stage 2}}</span>{{what it does}}<br><span class="ex">{{example datum}}</span></div>
+    <div class="arrow">→</div>
+    <div class="stage"><span class="st">{{stage 3}}</span>{{what it does}}<br><span class="ex">{{example output}}</span></div>
+  </div>
+  <figcaption>Figure 2 · {{the pipeline, with data flowing through}}</figcaption>
+</figure>
+
+<div class="callout c-key">
+  <span class="tag">The central "aha"</span>
+  <p>{{The one non-obvious idea the whole change hinges on.}}</p>
+</div>
+
+<h2 id="code"><span class="num">SECTION 3</span>The code</h2>
+<p>{{Group the changes into a story. Walk through representative snippets, not the whole diff.}}</p>
+<h3>Move 1 · {{grouping}}</h3>
+<pre><code><span class="tok-c">// Code blocks MUST be &lt;pre&gt; (or white-space: pre/pre-wrap).</span>
+<span class="tok-c">// Escape &lt; &gt; &amp; inside. Use .add / .del spans for diff lines:</span>
+<span class="del">- old line</span>
+<span class="add">+ new line</span></code></pre>
+<div class="callout c-edge">
+  <span class="tag">Edge case · {{name}}</span>
+  <p>{{A subtlety or edge case worth calling out, and why it's handled the way it is.}}</p>
+</div>
+
+<h2 id="quiz"><span class="num">SECTION 4</span>Quiz</h2>
+<p>Five questions to check the ideas landed — click an answer for feedback.</p>
+
+<!-- Worked example. Duplicate this block for questions 2–5. Exactly one data-correct="true". -->
+<div class="quiz" data-q="1">
+  <p class="q"><span class="n">Q1.</span> {{A medium-difficulty question probing the WHY behind the change.}}</p>
+  <button class="option" data-correct="false">{{plausible-but-wrong option}}</button>
+  <button class="option" data-correct="true">{{the correct option}}</button>
+  <button class="option" data-correct="false">{{plausible-but-wrong option}}</button>
+  <button class="option" data-correct="false">{{plausible-but-wrong option}}</button>
+  <div class="feedback"><span class="verdict"></span> <span class="why">{{Explanation shown after answering — why the right answer is right.}}</span></div>
+</div>
+
+<footer>
+  <p>{{One-line provenance note. If the doc was LLM-assisted and will be shared, say so per your team's policy.}}</p>
+</footer>
+
+</div>
+
+<script>
+  // Quiz interactivity: first click on a question locks it, marks correct/incorrect,
+  // reveals the right option and the explanation. No dependencies.
+  document.querySelectorAll('.quiz').forEach(function (quiz) {
+    var options = quiz.querySelectorAll('.option');
+    var feedback = quiz.querySelector('.feedback');
+    var verdict = feedback.querySelector('.verdict');
+    var answered = false;
+    options.forEach(function (opt) {
+      opt.addEventListener('click', function () {
+        if (answered) return;
+        answered = true;
+        var isCorrect = opt.getAttribute('data-correct') === 'true';
+        options.forEach(function (o) {
+          o.classList.add('locked');
+          if (o.getAttribute('data-correct') === 'true') o.classList.add('correct');
+        });
+        if (!isCorrect) opt.classList.add('incorrect');
+        verdict.textContent = isCorrect ? 'Correct.' : 'Not quite.';
+        verdict.className = 'verdict ' + (isCorrect ? 'ok' : 'no');
+        feedback.classList.add('show');
+      });
+    });
+  });
+</script>
+</body>
+</html>
