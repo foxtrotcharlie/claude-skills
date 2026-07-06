@@ -5,7 +5,7 @@ description: Produce a rich, interactive, self-contained HTML page that explains
 
 # Explain Diff (interactive HTML)
 
-Given a code change — a diff, a branch, a commit range, or a PR — produce a single self-contained, interactive HTML page that **teaches** the change. The reader might be a teammate onboarding, a reviewer, or the author's future self, and you don't know how much they already know, so the page builds from broad context up to the specifics.
+Given a code change — a diff, a branch, a commit range, a PR, or a *proposed* change not yet written (comparing the current code to a target) — produce a single self-contained, interactive HTML page that **teaches** the change. The reader might be a teammate onboarding, a reviewer, or the author's future self, and you don't know how much they already know, so the page builds from broad context up to the specifics.
 
 This is a *teaching artifact*, not a status summary. It is intentionally rich and long — that is the point. (Any terse house style applies to what you say in chat, not to this document.)
 
@@ -25,7 +25,7 @@ Copy `${CLAUDE_SKILL_DIR}/assets/template.html` to your output path and fill in 
 
 A good explanation comes from understanding, so spend real effort here before touching HTML.
 
-1. Get the change: `git show <ref>`, `git diff <base>..<head>`, or `gh pr diff <n>`.
+1. Get the change: `git show <ref>`, `git diff <base>..<head>`, or `gh pr diff <n>`. For a *proposed* change with no diff yet, read the current code and the target it will converge on (e.g. the shared trait/base it should adopt) and treat the current-vs-target delta as the change; the same four sections apply.
 2. **Explore the surrounding code broadly** — the Background section needs the real system, not just the lines in the diff. Read the files the change touches *and their neighbours*: the base class, the caller, the config, the tests. This is where the depth comes from.
 3. Decide the **two or three diagram families** you'll reuse across the page (see Diagrams). Picking them up front keeps the visuals coherent.
 
