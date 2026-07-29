@@ -555,6 +555,13 @@ ddev composer remove drupal/upgrade_status --no-ansi
 
 ## Related infrastructure
 
+**`dbuytaert/drupal-digests`** (<https://github.com/dbuytaert/drupal-digests>) publishes ~184 Rector rules extracted from Drupal core issues, one file per deprecation, named `<description>-<issue-number>.php`. Useful to this skill in two distinct ways, worth keeping separate:
+
+1. **As a reference, zero risk.** The `rector/rules/` directory is a browsable index of what core has deprecated recently, including the argument-conditional ones step 6b hunts for — it carries rules for `Config::save(TRUE)`/`trustData()` (`…-3347842.php`), the integer fetch mode (`…-3488467.php`), and `getEntityTypeIdKeyType()` (`…-3566801.php`). When a sweep hit needs triage, or you want to know whether a pattern has a known fix, read the matching rule. It cites the change record and shows before/after.
+2. **As a tool, only after evaluation.** Rector rewrites code from the AST, so it catches what tag-matching cannot — but this is a personal project (~29 stars, no release process, unaffiliated with the Drupal Association) whose README states the rules were AI-extracted and "may contain errors". That is observable in the source: at least one rule cites two conflicting change-record IDs across its own docblocks, and another's type guard checks `Drupal\Core\Config\Config` while its description targets `ConfigEntityBase::trustData()` — config entities don't resolve to that type, so the documented pattern may never fire. **Never apply it without `--dry-run` first, and never in an environment where adding a third-party dev dependency is a supply-chain decision you are not authorised to make.**
+
+Treat a Rector rule as a hypothesis to verify against core's own source, not as an authority.
+
 In Apple People-Applications repos, Rio CI runs the shared deprecation harness from `ciderpress/drupal-testing` (`lib/stages/deprecation_peeps_site.sh`). It uses the same flags this skill uses (`--all --ignore-uninstalled --ignore-contrib`) and ships the structured keyValue dump to the central `pa-deprecations` S3 blobstore: `https://store-test.blobstore.apple.com/pa-deprecations/<org>/v1/<repo>/<DATE>.json`. Mention this if the user is on a People-Applications repo — they may already have a recent CI-tracked result they can compare against.
 
 ## Examples
