@@ -35,6 +35,22 @@ And many (not all) findings carry a Drupal version stamp: `Deprecated in drupal:
 
 The structured results live in the `upgrade_status_scan_results` keyValue store after a scan completes. Reading them via `drush eval` is far more reliable than parsing the textual output (which has wrapped paths, wrapped messages, and inconsistent column widths).
 
+### What upgrade_status cannot see
+
+`upgrade_status` and PHPStan both detect deprecations by matching the `@deprecated` **docblock tag** on a symbol. A whole class of Drupal deprecations carries no such tag, because the method is not deprecated — only **passing a particular argument** is, and that is enforced at runtime:
+
+```php
+// core/lib/Drupal/Core/Config/Config.php — no @deprecated tag on the method
+public function save($has_trusted_data = FALSE) {
+  if (func_num_args() > 0) {
+    @trigger_error('Calling ' . __METHOD__ . '() with the $has_trusted_data argument is deprecated in drupal:11.4.0 and is removed from drupal:13.0.0 …', E_USER_DEPRECATED);
+  }
+```
+
+`$config->save(TRUE)` triggers that. `$config->save()` does not. Both are valid PHP, both type-check, both pass PHPStan, and **`upgrade_status` reports zero**. The same shape guards `is_int($mode)` on the database statement fetch methods, and `$x instanceof OldInterface` on several constructors mid-way through a DI signature change.
+
+These are easy to miss precisely because a clean scan looks like an all-clear. Step 6b below adds a grep-based pass for them. It is a heuristic, not a proof — but it costs seconds and it catches a category the primary tool structurally cannot.
+
 **Most useful when:**
 - Before a major upgrade (`later` items will break)
 - After a minor update (new deprecations introduced)
@@ -282,6 +298,88 @@ PY
 
 If a user explicitly wants to include disabled modules (e.g. they're scanning a project that's about to be re-enabled), skip the enabled-extensions capture and the normalizer falls back to including everything (`enabled_set is None` branch).
 
+### 6b. Sweep for argument-conditional deprecations (upgrade_status blind spot)
+
+Everything above depends on `@deprecated` tags. This step catches the class described in "What upgrade_status cannot see" — deprecations triggered by a runtime guard inside an otherwise-supported method. Run it on every scan; it takes seconds and needs no site bootstrap.
+
+The approach is two-pass: derive the affected method names **from the core actually installed** (never hardcode a list — it changes every minor), then grep custom code for calls to those methods that pass an argument.
+
+```bash
+python3 <<'PY'
+import re, pathlib
+from collections import defaultdict
+
+# Pass 1 — find core methods whose deprecation fires on a runtime guard.
+GUARD = re.compile(r'^\s*if \((?:func_num_args\(\) > 0|is_int\(|!is_string\(|!is_int\(|\$\w+ instanceof )')
+FUNC  = re.compile(r'^\s*(?:public|protected|private)?\s*(?:static\s+)?function\s+([a-zA-Z_]\w*)\s*\(')
+
+methods = defaultdict(list)
+for root in (pathlib.Path('web/core/lib'), pathlib.Path('web/core/modules')):
+    for f in root.rglob('*.php'):
+        try:
+            lines = f.read_text(errors='ignore').splitlines()
+        except Exception:
+            continue
+        if 'E_USER_DEPRECATED' not in '\n'.join(lines):
+            continue
+        for i, ln in enumerate(lines):
+            if 'E_USER_DEPRECATED' not in ln:
+                continue
+            guard = next((lines[j].strip() for j in range(max(0, i - 5), i) if GUARD.match(lines[j])), None)
+            if not guard:
+                continue
+            method = next((FUNC.match(lines[j]).group(1) for j in range(i, max(0, i - 60), -1) if FUNC.match(lines[j])), None)
+            if not method:
+                continue
+            removed = re.search(r'removed (?:from|in) drupal:(\d+)', ln)
+            methods[method].append({
+                'core': f'{f}:{i + 1}',
+                'guard': guard[:60],
+                'removed': removed.group(1) if removed else '?',
+            })
+
+print(f'Core methods with runtime-guarded deprecations: {len(methods)}')
+for m in sorted(methods):
+    print(f'  {m}  (removed in D{methods[m][0]["removed"]})  guard: {methods[m][0]["guard"]}')
+
+# Pass 2 — find custom call sites passing an argument to any of them.
+print('\nCustom call sites passing arguments to those methods:')
+SKIP = {'__construct'}  # too generic to grep usefully; check DI signatures by hand
+hits = 0
+for sub in ('web/modules/custom', 'web/themes/custom'):
+    base = pathlib.Path(sub)
+    if not base.exists():
+        continue
+    for f in list(base.rglob('*.php')) + list(base.rglob('*.module')) + list(base.rglob('*.theme')):
+        try:
+            lines = f.read_text(errors='ignore').splitlines()
+        except Exception:
+            continue
+        for i, ln in enumerate(lines):
+            if ln.lstrip().startswith(('//', '*', '#')):
+                continue
+            for m in methods:
+                if m in SKIP:
+                    continue
+                # ->method( followed by anything that is not immediately ')'
+                if re.search(rf'->{re.escape(m)}\(\s*[^)\s]', ln):
+                    print(f'  {f}:{i + 1}  [{m}, removed D{methods[m][0]["removed"]}]')
+                    print(f'      {ln.strip()[:120]}')
+                    hits += 1
+print(f'\n{hits} call site(s) to review by hand.')
+PY
+```
+
+**Triage the output by hand — most hits are fine.** The grep cannot tell an offending argument from a legitimate one. For each hit, open the core method named in pass 1 and check whether the specific argument being passed satisfies the guard:
+
+- `save(TRUE)` fires `func_num_args() > 0`; `save()` does not.
+- `fetchAllAssoc('id')` is fine; `fetchAllAssoc('id', \PDO::FETCH_ASSOC)` fires `is_int($mode)` — the fix is the `\Drupal\Core\Database\Statement\FetchAs` enum (`FetchAs::Associative`, `::Object`, `::List`, `::Column`, `::ClassObject`).
+- `instanceof` guards are mid-flight DI signature changes: check the argument order against the current core constructor.
+
+Report survivors in the "Will break in Drupal {X+1}" / "{X+2}" buckets alongside the upgrade_status findings, tagged **found by argument-conditional sweep, not reported by upgrade_status** so the reader knows the primary tool was silent on them.
+
+**Limitations, state them in the report:** the guard regex covers the four shapes above within five lines of the trigger, matches on method *name* only (so a same-named method on an unrelated class is a false positive), and skips `__construct`. It will miss guards written differently. It is a net, not a proof.
+
 ### 7. Build the report
 
 Read `\Drupal::VERSION` so the report can frame everything against the live core version:
@@ -320,6 +418,7 @@ For **disabled-module findings**: collect them in a single "Suppressed: findings
 ## Headline (enabled modules only)
 
 - **Real Drupal-API deprecations:** N (M will break in D{X+1}, K in D{X+2})
+- **Argument-conditional deprecations (sweep only — upgrade_status reports these as clean):** N
 - **Already-broken (deprecation removed in current or earlier core):** N
 - **Code-quality (PHPStan) findings:** N — not deprecations; consider /drupal-quality-loop
 - **info.yml core_version_requirement updates needed:** N
@@ -337,6 +436,12 @@ For **disabled-module findings**: collect them in a single "Suppressed: findings
 ## Will break in Drupal {X+2}
 
 [table or "None"]
+
+## Argument-conditional deprecations (sweep)
+
+Found by the step 6b grep, not by upgrade_status — these carry no `@deprecated` tag, so a clean upgrade_status result says nothing about them.
+
+[table of file:line, the call as written, the core guard it trips, removed-in version, and the fix — or "None found. Swept N core methods with runtime-guarded deprecations against M custom call sites."]
 
 ## Code-quality findings (PHPStan)
 
@@ -405,6 +510,8 @@ If zero real deprecations and the only items are info.yml `core_version_requirem
 ```
 ✓ No Drupal-API deprecations in enabled custom code. Only N info.yml files need core_version_requirement bumped to allow ^{X+1}.
 ```
+
+**Never write that line without having run step 6b.** A clean `upgrade_status` result is not evidence of zero deprecations — it is evidence of zero *tagged* deprecations. If the sweep was skipped, say so explicitly instead: "upgrade_status found none; the argument-conditional sweep was not run."
 
 ### 8. Save report
 
@@ -497,6 +604,8 @@ the /upstream-patch-flow for opening that PR?
 ## Tips
 
 - **The textual drush output is for humans only — never parse it.** Always go via the keyValue store.
+- **A clean upgrade_status result is not "no deprecations".** It means no `@deprecated`-tagged symbol is referenced. Argument-conditional deprecations (step 6b) are invisible to it, to PHPStan, and to the phpstan baseline — all three report clean. Always run the sweep before declaring an all-clear.
+- **`SYMFONY_DEPRECATIONS_HELPER` is not the fallback you might expect.** It belongs to `symfony/phpunit-bridge`, which Drupal 11 no longer ships — core uses its own `DeprecationHandler` (`core/tests/bootstrap.php`), configured via PHPUnit XML extension config, not that env var. Check `composer.lock` for the bridge before trusting a "strict mode" run; without it the variable is inert and a green run means nothing. Even when wired up, it only catches deprecations on code paths the tests actually execute.
 - **`--ignore-uninstalled` matters.** Without it you get false-positive library findings for modules that aren't enabled in this environment.
 - **PHPStan findings are not deprecations.** Don't lump them in. They belong to `/drupal-quality-loop`.
 - **Vendored upstream findings are someone else's job.** Surface them in a separate section so the user doesn't try to "fix" code that lives in `web/modules/apple/`.

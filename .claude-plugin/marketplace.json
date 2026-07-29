@@ -12,7 +12,7 @@
     {
       "name": "drupal-dev",
       "description": "General-purpose Drupal development skills: quality loop, architecture analysis, deprecation scanning.",
-      "version": "1.0.0",
+      "version": "1.1.0",
       "author": { "name": "Charles Tanton" },
       "category": "development",
       "source": "./plugins/drupal-dev"
