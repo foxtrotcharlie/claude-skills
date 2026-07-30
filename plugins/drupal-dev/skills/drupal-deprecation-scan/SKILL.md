@@ -597,6 +597,32 @@ git worktree remove --force .worktrees/rector-base && rm -rf .worktrees/rector-d
 
 `--dry-run` exits **non-zero whenever it would change anything**, so a non-zero exit is the normal result and must not be treated as a tool error. Report per-rule counts, never a single aggregate pass/fail.
 
+#### When a rule misbehaves, capture it for upstream
+
+The rules are AI-extracted and the README says they may contain errors, so finding a defect is expected rather than remarkable. Each one you find is worth two minutes of write-up, because the alternative is that the next person re-derives it. Log it below and offer the user a sanitised upstream report.
+
+**Before calling anything a defect, read the rule's source.** Several rules are deliberately conservative and say so in a comment; reporting those as bugs wastes everyone's time and damages the report's credibility. The distinction to make:
+
+- **Defect** — the rule does not do what its own docblock says. Report it.
+- **Deliberate limitation** — the rule's source documents why it declines a case. Propose an enhancement, or leave it.
+- **Inherent limitation** — the rule needs a resolvable type and your code does not provide one. Not reportable; just know that per-rule counts are a floor, never a total.
+
+**Reporting shape.** Prefer an **issue over a PR**: with no tags and no release process, a merged fix cannot be consumed by version bump, so the repro is the valuable part, not the patch. Always (a) name the ruleset commit you ran, since `main` moves untagged; (b) write the reproduction in **core terms only** — no internal class, module, repo or ticket names, no employer source; a two-class core-only example is enough. Filing is a GitHub write, so draft it and get the user's approval first.
+
+**Known defects — verified against ruleset commit `fe88ea1`.** Check here before re-investigating.
+
+| Rule | Finding |
+|---|---|
+| `remove-deprecated-trusted-data-concept-…-3347842.php` | **Defect.** Pattern 2 guards on `ObjectType('Drupal\Core\Config\Config')` while its docblock targets `ConfigEntityBase::trustData()`. A config *entity* never resolves to that type, so the documented `$entity->trustData()->save()` pattern cannot fire. Pattern 1 (`$config->save(TRUE)`) works and is genuinely valuable. Likely fix: guard on `ConfigEntityInterface`. |
+| `add-runtestsinseparateprocesses-…-3546029.php` | **Defect.** Proposed 54 of 56 in-scope classes; the two missed extend `EntityKernelTestBase`, itself a `KernelTestBase` subclass, so indirect ancestry through a core intermediate is not resolved. Fails safe (false negative), but 54-of-56 reads as a finished job — more misleading than a zero. |
+| `rename-deprecated-defaultfetchmode-…-3488467.php` | **Metadata defect + gap.** Renames a `$defaultFetchMode` property, which is a different deprecation from the integer-fetch-mode one its name suggests (core cites 3488338). And no rule anywhere covers `\PDO::FETCH_*` passed as an *argument* — worth proposing as a new rule. |
+| `replace-deprecated-entity-type-integer-id-helpers-…-3566801.php` | **Metadata defect.** Filename cites 3566801; core's own deprecation message cites 3566814. Docblocks within the file disagree too. |
+| The 31 configs excluded from `all.php` | **Consistency defect.** They set no `withFileExtensions()`, so run individually they silently cover `.php` only — while all 153 included configs do set it. The rules you must run by hand are exactly the ones that will skip `.module`/`.install`/`.theme`. |
+| `remove-deprecated-phpunitcompatibilitytrait-…-3582118.php` and two others | **Design issue.** Each sets `->withImportNames(removeUnusedImports: true)`, so the config strips unused imports repo-wide as a side effect of the rule. This one matches nothing in a typical codebase yet reports dozens of changed files. |
+| `replace-deprecated-entity-original-magic-property-…-3571065.php` | **Deliberate limitation, do not report as a bug.** It skips `$this->original` via an explicit `!isThisVar()` guard, commented as protecting non-entity classes (`EntityTypeEvent`, `FieldStorageDefinitionEvent`) that own a legitimate `$original` property. Over-conservative for entity subclasses, where the deprecation does fire — a reasonable enhancement request would be to allow `$this` when it resolves to `EntityInterface`. |
+| Any type-guarded rule | **Inherent limitation.** An untyped receiver (`function getComparison($entity, …)`) cannot be resolved, so the guard fails and the site is skipped silently. Nothing to report; it is why per-rule counts are a floor. |
+
+
 In Apple People-Applications repos, Rio CI runs the shared deprecation harness from `ciderpress/drupal-testing` (`lib/stages/deprecation_peeps_site.sh`). It uses the same flags this skill uses (`--all --ignore-uninstalled --ignore-contrib`) and ships the structured keyValue dump to the central `pa-deprecations` S3 blobstore: `https://store-test.blobstore.apple.com/pa-deprecations/<org>/v1/<repo>/<DATE>.json`. Mention this if the user is on a People-Applications repo — they may already have a recent CI-tracked result they can compare against.
 
 ## Examples
