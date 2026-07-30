@@ -558,9 +558,44 @@ ddev composer remove drupal/upgrade_status --no-ansi
 **`dbuytaert/drupal-digests`** (<https://github.com/dbuytaert/drupal-digests>) publishes ~184 Rector rules extracted from Drupal core issues, one file per deprecation, named `<description>-<issue-number>.php`. Useful to this skill in two distinct ways, worth keeping separate:
 
 1. **As a reference, zero risk.** The `rector/rules/` directory is a browsable index of what core has deprecated recently, including the argument-conditional ones step 6b hunts for — it carries rules for `Config::save(TRUE)`/`trustData()` (`…-3347842.php`), the integer fetch mode (`…-3488467.php`), and `getEntityTypeIdKeyType()` (`…-3566801.php`). When a sweep hit needs triage, or you want to know whether a pattern has a known fix, read the matching rule. It cites the change record and shows before/after.
-2. **As a tool, only after evaluation.** Rector rewrites code from the AST, so it catches what tag-matching cannot — but this is a personal project (~29 stars, no release process, unaffiliated with the Drupal Association) whose README states the rules were AI-extracted and "may contain errors". That is observable in the source: at least one rule cites two conflicting change-record IDs across its own docblocks, and another's type guard checks `Drupal\Core\Config\Config` while its description targets `ConfigEntityBase::trustData()` — config entities don't resolve to that type, so the documented pattern may never fire. **Never apply it without `--dry-run` first, and never in an environment where adding a third-party dev dependency is a supply-chain decision you are not authorised to make.**
+2. **As a tool, only after evaluation.** Rector rewrites code from the AST, so it catches what tag-matching cannot — but this is a personal project (~29 stars, no release process, unaffiliated with the Drupal Association) whose README states the rules were AI-extracted and "may contain errors". That is observable in the source: rule filenames cite change-record IDs that do not always match the node in core's own deprecation message (`…-3566801.php` vs core's 3566814; `…-3488467.php` vs 3488338), so treat rule metadata as unreliable. **Never apply it without `--dry-run` first, and never in an environment where adding a third-party dev dependency is a supply-chain decision you are not authorised to make.**
 
 Treat a Rector rule as a hypothesis to verify against core's own source, not as an authority.
+
+#### Mechanical facts about this rule set
+
+These are not judgement calls — they are properties of the ruleset and of Rector that cannot be inferred by reading the code you are scanning, and each one has produced a wrong conclusion in practice. Verified against ruleset commit `fe88ea1`; re-check them if the numbers have drifted, because `main` is a moving target (it advanced twice in 24 hours during evaluation) and there are no tags.
+
+- **`--config` does not invalidate Rector's cache.** Running rule A, then rule B against the same paths can report `[OK] Rector is done!` for B purely from A's cached result. This produced a false "rule does not fire" during evaluation on a rule that fires correctly. **Always pass `--clear-cache` when sweeping rule-by-rule.** A cached zero and a real zero are indistinguishable in the output.
+- **`all.php` runs 153 of the 184 rules.** The other 31 are listed in a `Not included (standalone configs, run separately)` comment block at the top of the file and are silently skipped — including `rename-deprecated-defaultfetchmode-to-fetchmode-in-database-3488467.php`. The README's own one-liner therefore does not run them. To cover everything, run the excluded ones individually.
+- **`rector/` holds two parallel copies.** `rector/rules/*.php` are the 184 rule *classes*; the 184 same-named files directly in `rector/` are runnable standalone *configs* (plus `all.php`). Use the flat ones for per-rule attribution — `--rules-summary` renders rule names blank under `all.php`'s `require_once` loading, so a combined run cannot tell you which rule produced which diff.
+- **`all.php` does handle Drupal file extensions — the 31 excluded configs do not.** `all.php` and each of the 153 standalone configs it includes set `withFileExtensions(['php', 'engine', 'inc', 'install', 'module', 'profile', 'theme'])`, so `.module`/`.install`/`.theme` are covered there. The 31 configs on the exclusion list set **no** extensions and therefore fall back to Rector's `.php`-only default — and that set is *exactly* the same 31. So the rules you have to run individually are precisely the ones that will silently skip `.module`, `.install` and `.theme` unless you add `--file-extension` yourself. The usual "Rector only reads `.php` by default" worry is wrong for `all.php` and right for everything it leaves out.
+- **Three configs strip unused imports repo-wide as a side effect.** `remove-deprecated-phpunitcompatibilitytrait-from-test-3582118.php`, `add-void-return-type-hints-to-phpunit-test-methods-3562361.php` and `add-php-type-declarations-to-module-and-test-code-via-rector-3584406.php` each set `->withImportNames(removeUnusedImports: true)`. The first matches nothing in a typical codebase yet still reports dozens of changed files — unrelated churn from a rule advertised as doing something else. All three are on the exclusion list; keep them there.
+- **No rule covers `\PDO::FETCH_*` passed as an argument.** The similarly-named fetch-mode rule renames a `$defaultFetchMode` *property* on `StatementPrefetchIterator`/`StatementWrapperIterator` subclasses (removed **D12**). The integer-fetch-mode deprecation that actually appears in application code — `fetchAllAssoc('id', \PDO::FETCH_ASSOC)`, `setFetchMode(\PDO::FETCH_ASSOC)`, fixed with the `FetchAs` enum — has **no rule at all**. Step 6b's sweep is the only thing that finds it.
+- **Rules gate on class ancestry, never on core version.** `UseEntityTypeHasIntegerIdRector` fires only inside subclasses of `DefaultHtmlRouteProvider`, `CommentTypeForm` or `OverridesSectionStorage`, which is why it correctly skips a class that declares its own same-named helper. But it would happily rewrite a class that *does* extend core's provider while declaring `^11 || ^12`, breaking 11.0–11.3 where `hasIntegerId()` does not exist. **Check the module's `core_version_requirement` before accepting any proposal that introduces a newly-added core method.**
+- **A rule can be half-broken and still report success.** `RemoveTrustedDataConceptRector` documents two patterns; only the first works. `$config->save(TRUE)` → `$config->save()` fires correctly (and is genuinely valuable — it is invisible to upgrade_status, PHPStan and the phpstan baseline alike). The `$entity->trustData()->save()` pattern type-guards on `Drupal\Core\Config\Config`, which a config *entity* never resolves to, so it never fires. Per-rule zero results say nothing about the patterns a rule claims to cover.
+
+**Running it, if you run it:**
+
+```bash
+# vendor/ is git-tracked in some repos — install in a throwaway worktree so
+# composer.json/lock/vendor at the repo root are never touched.
+git worktree add --detach .worktrees/rector-base <commit>
+cp .env .worktrees/rector-base/.env   # Rector's bootstrap runs load.environment.php
+
+# The container's /tmp is NOT the host's /tmp. Put the clone somewhere the
+# container can see that is also gitignored, so it cannot reach a commit.
+git clone --depth 1 https://github.com/dbuytaert/drupal-digests.git .worktrees/rector-digests
+
+ddev exec "cd /var/www/html/.worktrees/rector-base && composer require rector/rector --dev --no-interaction"
+ddev exec "cd /var/www/html/.worktrees/rector-base && vendor/bin/rector process web/modules/custom \
+  --config /var/www/html/.worktrees/rector-digests/rector/<single-rule>.php \
+  --dry-run --no-progress-bar --clear-cache"
+
+git worktree remove --force .worktrees/rector-base && rm -rf .worktrees/rector-digests
+```
+
+`--dry-run` exits **non-zero whenever it would change anything**, so a non-zero exit is the normal result and must not be treated as a tool error. Report per-rule counts, never a single aggregate pass/fail.
 
 In Apple People-Applications repos, Rio CI runs the shared deprecation harness from `ciderpress/drupal-testing` (`lib/stages/deprecation_peeps_site.sh`). It uses the same flags this skill uses (`--all --ignore-uninstalled --ignore-contrib`) and ships the structured keyValue dump to the central `pa-deprecations` S3 blobstore: `https://store-test.blobstore.apple.com/pa-deprecations/<org>/v1/<repo>/<DATE>.json`. Mention this if the user is on a People-Applications repo — they may already have a recent CI-tracked result they can compare against.
 
